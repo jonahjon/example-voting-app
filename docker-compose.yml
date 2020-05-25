@@ -1,35 +1,40 @@
-version: "3"
+version: "3.7"
 
 services:
   vote:
+    image: ${REGISTRY}/ndeloof/vote
     build: ./vote
     command: python app.py
     volumes:
      - ./vote:/app
     ports:
-      - "5000:80"
+      - "5000:5000"
     networks:
       - front-tier
       - back-tier
 
   result:
+    image: ${REGISTRY}/ndeloof/result
     build: ./result
     command: nodemon server.js
     volumes:
       - ./result:/app
     ports:
-      - "5001:80"
+      - "5001:5001"
       - "5858:5858"
     networks:
       - front-tier
       - back-tier
 
   worker:
-    build:
+    image: ndeloof/worker    
+    x-aws-pull_credentials: "arn:aws:secretsmanager:eu-west-3:175142243308:secret:DockerHubAccessToken-vKjW34"
+    build: 
       context: ./worker
+      dockerfile: Dockerfile.j
     depends_on:
       - "redis"
-      - "db"
+      - "db"      
     networks:
       - back-tier
 
@@ -46,14 +51,15 @@ services:
     environment:
       POSTGRES_USER: "postgres"
       POSTGRES_PASSWORD: "postgres"
-    volumes:
-      - "db-data:/var/lib/postgresql/data"
+#    volumes:
+#      - "db-data:/var/lib/postgresql/data"
     networks:
       - back-tier
 
-volumes:
-  db-data:
+# volumes:
+#  db-data:
 
 networks:
   front-tier:
   back-tier:
+

@@ -1,5 +1,5 @@
 # Using official python runtime base image
-FROM python:2.7-alpine
+FROM python:2.7
 
 # Set the application directory
 WORKDIR /app
@@ -12,7 +12,10 @@ RUN pip install -r requirements.txt
 ADD . /app
 
 # Make port 80 available for links and/or publish
-EXPOSE 80
+EXPOSE 5000
+
+COPY entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Define our command to be run when launching the container
-CMD ["gunicorn", "app:app", "-b", "0.0.0.0:80", "--log-file", "-", "--access-logfile", "-", "--workers", "4", "--keep-alive", "0"]
+CMD ["gunicorn", "app:app", "-b", "0.0.0.0:5000", "--log-file", "-", "--access-logfile", "-", "--workers", "4", "--keep-alive", "0"]

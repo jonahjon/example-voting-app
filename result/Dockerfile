@@ -12,8 +12,11 @@ RUN npm ci \
 
 COPY . .
 
-ENV PORT 80
+ENV PORT 5001
 
-EXPOSE 80
+EXPOSE 5001
+
+COPY entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 
 CMD ["node", "server.js"]

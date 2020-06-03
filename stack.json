@@ -1,0 +1,1052 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Conditions": {
+    "CreateCluster": {
+      "Fn::Equals": [
+        "",
+        {
+          "Ref": "ParameterClusterName"
+        }
+      ]
+    }
+  },
+  "Parameters": {
+    "ParameterClusterName": {
+      "Description": "Name of the ECS cluster to deploy to (optional)",
+      "Type": "String"
+    },
+    "ParameterSubnet1Id": {
+      "Description": "SubnetId, for Availability Zone 1 in the region in your VPC",
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "ParameterSubnet2Id": {
+      "Description": "SubnetId, for Availability Zone 2 in the region in your VPC",
+      "Type": "AWS::EC2::Subnet::Id"
+    },
+    "ParameterVPCId": {
+      "Description": "ID of the VPC",
+      "Type": "AWS::EC2::VPC::Id"
+    }
+  },
+  "Resources": {
+    "CloudMap": {
+      "Properties": {
+        "Description": "Service Map for Docker Compose project examplevotingapp",
+        "Name": "examplevotingapp.local",
+        "Vpc": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::PrivateDnsNamespace"
+    },
+    "Cluster": {
+      "Condition": "CreateCluster",
+      "Properties": {
+        "ClusterName": "examplevotingapp",
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "examplevotingapp"
+          }
+        ]
+      },
+      "Type": "AWS::ECS::Cluster"
+    },
+    "DbService": {
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "ExamplevotingappBacktierNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "SchedulingStrategy": "REPLICA",
+        "ServiceName": "db",
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "DbServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "examplevotingapp"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "db"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "DbTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "DbServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"db\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "Name": "db",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "DbTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Environment": [
+              {
+                "Name": "POSTGRES_PASSWORD",
+                "Value": "postgres"
+              },
+              {
+                "Name": "POSTGRES_USER",
+                "Value": "postgres"
+              },
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " examplevotingapp.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "docker.io/library/postgres:9.4",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "examplevotingapp"
+              }
+            },
+            "Name": "db"
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "DbTaskExecutionRole"
+        },
+        "Family": "examplevotingapp-db",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "DbTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "ExamplevotingappBacktierNetwork": {
+      "Properties": {
+        "GroupDescription": "examplevotingapp back-tier Security Group",
+        "GroupName": "ExamplevotingappBacktierNetwork",
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "result:5001/tcp",
+            "FromPort": 5001,
+            "IpProtocol": "TCP",
+            "ToPort": 5001
+          },
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "result:5858/tcp",
+            "FromPort": 5858,
+            "IpProtocol": "TCP",
+            "ToPort": 5858
+          },
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "redis:6379/tcp",
+            "FromPort": 6379,
+            "IpProtocol": "TCP",
+            "ToPort": 6379
+          },
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "vote:5000/tcp",
+            "FromPort": 5000,
+            "IpProtocol": "TCP",
+            "ToPort": 5000
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "examplevotingapp"
+          },
+          {
+            "Key": "com.docker.compose.network",
+            "Value": "back-tier"
+          }
+        ],
+        "VpcId": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::EC2::SecurityGroup"
+    },
+    "ExamplevotingappBacktierNetworkIngress": {
+      "Properties": {
+        "Description": "Allow communication within network back-tier",
+        "GroupId": {
+          "Ref": "ExamplevotingappBacktierNetwork"
+        },
+        "IpProtocol": "-1",
+        "SourceSecurityGroupId": {
+          "Ref": "ExamplevotingappBacktierNetwork"
+        }
+      },
+      "Type": "AWS::EC2::SecurityGroupIngress"
+    },
+    "ExamplevotingappFronttierNetwork": {
+      "Properties": {
+        "GroupDescription": "examplevotingapp front-tier Security Group",
+        "GroupName": "ExamplevotingappFronttierNetwork",
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "result:5001/tcp",
+            "FromPort": 5001,
+            "IpProtocol": "TCP",
+            "ToPort": 5001
+          },
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "result:5858/tcp",
+            "FromPort": 5858,
+            "IpProtocol": "TCP",
+            "ToPort": 5858
+          },
+          {
+            "CidrIp": "0.0.0.0/0",
+            "Description": "vote:5000/tcp",
+            "FromPort": 5000,
+            "IpProtocol": "TCP",
+            "ToPort": 5000
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "examplevotingapp"
+          },
+          {
+            "Key": "com.docker.compose.network",
+            "Value": "front-tier"
+          }
+        ],
+        "VpcId": {
+          "Ref": "ParameterVPCId"
+        }
+      },
+      "Type": "AWS::EC2::SecurityGroup"
+    },
+    "ExamplevotingappFronttierNetworkIngress": {
+      "Properties": {
+        "Description": "Allow communication within network front-tier",
+        "GroupId": {
+          "Ref": "ExamplevotingappFronttierNetwork"
+        },
+        "IpProtocol": "-1",
+        "SourceSecurityGroupId": {
+          "Ref": "ExamplevotingappFronttierNetwork"
+        }
+      },
+      "Type": "AWS::EC2::SecurityGroupIngress"
+    },
+    "LogGroup": {
+      "Properties": {
+        "LogGroupName": "/docker-compose/examplevotingapp"
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "RedisService": {
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "ExamplevotingappBacktierNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "SchedulingStrategy": "REPLICA",
+        "ServiceName": "redis",
+        "ServiceRegistries": [
+          {
+            "Port": 6379,
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "RedisServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "examplevotingapp"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "redis"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "RedisTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "RedisServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"redis\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            },
+            {
+              "TTL": 60,
+              "Type": "SRV"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "Name": "redis",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "RedisTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Environment": [
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " examplevotingapp.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "docker.io/library/redis:alpine",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "examplevotingapp"
+              }
+            },
+            "Name": "redis",
+            "PortMappings": [
+              {
+                "ContainerPort": 6379,
+                "Protocol": "tcp"
+              }
+            ]
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "RedisTaskExecutionRole"
+        },
+        "Family": "examplevotingapp-redis",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "RedisTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "ResultService": {
+      "DependsOn": [
+        "DbService"
+      ],
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "ExamplevotingappFronttierNetwork"
+              },
+              {
+                "Ref": "ExamplevotingappBacktierNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "SchedulingStrategy": "REPLICA",
+        "ServiceName": "result",
+        "ServiceRegistries": [
+          {
+            "Port": 5001,
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "ResultServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "examplevotingapp"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "result"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "ResultTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "ResultServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"result\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            },
+            {
+              "TTL": 60,
+              "Type": "SRV"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "Name": "result",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "ResultTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Command": [
+              "nodemon",
+              "server.js"
+            ],
+            "Environment": [
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " examplevotingapp.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "175142243308.dkr.ecr.eu-west-3.amazonaws.com/ndeloof/result",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "examplevotingapp"
+              }
+            },
+            "Name": "result",
+            "PortMappings": [
+              {
+                "ContainerPort": 5001,
+                "HostPort": 5001,
+                "Protocol": "tcp"
+              },
+              {
+                "ContainerPort": 5858,
+                "HostPort": 5858,
+                "Protocol": "tcp"
+              }
+            ]
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "ResultTaskExecutionRole"
+        },
+        "Family": "examplevotingapp-result",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "ResultTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "VoteService": {
+      "DependsOn": [
+        "RedisService"
+      ],
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "ExamplevotingappBacktierNetwork"
+              },
+              {
+                "Ref": "ExamplevotingappFronttierNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "SchedulingStrategy": "REPLICA",
+        "ServiceName": "vote",
+        "ServiceRegistries": [
+          {
+            "Port": 5000,
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "VoteServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "examplevotingapp"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "vote"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "VoteTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "VoteServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"vote\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            },
+            {
+              "TTL": 60,
+              "Type": "SRV"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "Name": "vote",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "VoteTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Command": [
+              "python",
+              "app.py"
+            ],
+            "Environment": [
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " examplevotingapp.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "175142243308.dkr.ecr.eu-west-3.amazonaws.com/ndeloof/vote",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "examplevotingapp"
+              }
+            },
+            "Name": "vote",
+            "PortMappings": [
+              {
+                "ContainerPort": 5000,
+                "HostPort": 5000,
+                "Protocol": "tcp"
+              }
+            ]
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "VoteTaskExecutionRole"
+        },
+        "Family": "examplevotingapp-vote",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "VoteTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "WorkerService": {
+      "DependsOn": [
+        "RedisService",
+        "DbService"
+      ],
+      "Properties": {
+        "Cluster": {
+          "Fn::If": [
+            "CreateCluster",
+            {
+              "Ref": "Cluster"
+            },
+            {
+              "Ref": "ParameterClusterName"
+            }
+          ]
+        },
+        "DesiredCount": 1,
+        "LaunchType": "FARGATE",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "SecurityGroups": [
+              {
+                "Ref": "ExamplevotingappBacktierNetwork"
+              }
+            ],
+            "Subnets": [
+              {
+                "Ref": "ParameterSubnet1Id"
+              },
+              {
+                "Ref": "ParameterSubnet2Id"
+              }
+            ]
+          }
+        },
+        "SchedulingStrategy": "REPLICA",
+        "ServiceName": "worker",
+        "ServiceRegistries": [
+          {
+            "RegistryArn": {
+              "Fn::GetAtt": [
+                "WorkerServiceDiscoveryEntry",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "com.docker.compose.project",
+            "Value": "examplevotingapp"
+          },
+          {
+            "Key": "com.docker.compose.service",
+            "Value": "worker"
+          }
+        ],
+        "TaskDefinition": {
+          "Ref": "WorkerTaskDefinition"
+        }
+      },
+      "Type": "AWS::ECS::Service"
+    },
+    "WorkerServiceDiscoveryEntry": {
+      "Properties": {
+        "Description": "\"worker\" service discovery entry in Cloud Map",
+        "DnsConfig": {
+          "DnsRecords": [
+            {
+              "TTL": 60,
+              "Type": "A"
+            }
+          ],
+          "RoutingPolicy": "MULTIVALUE"
+        },
+        "Name": "worker",
+        "NamespaceId": {
+          "Ref": "CloudMap"
+        }
+      },
+      "Type": "AWS::ServiceDiscovery::Service"
+    },
+    "WorkerTaskDefinition": {
+      "Properties": {
+        "ContainerDefinitions": [
+          {
+            "Environment": [
+              {
+                "Name": "LOCALDOMAIN",
+                "Value": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".compute.internal",
+                      " examplevotingapp.local"
+                    ]
+                  ]
+                }
+              }
+            ],
+            "Essential": true,
+            "Image": "docker.io/ndeloof/worker",
+            "LinuxParameters": {},
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "examplevotingapp"
+              }
+            },
+            "Name": "worker",
+            "RepositoryCredentials": {
+              "CredentialsParameter": "arn:aws:secretsmanager:eu-west-3:175142243308:secret:DockerHubAccessToken-vKjW34"
+            }
+          }
+        ],
+        "Cpu": "256",
+        "ExecutionRoleArn": {
+          "Ref": "WorkerTaskExecutionRole"
+        },
+        "Family": "examplevotingapp-worker",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ]
+      },
+      "Type": "AWS::ECS::TaskDefinition"
+    },
+    "WorkerTaskExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ecs-tasks.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ],
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "secretsmanager:GetSecretValue",
+                    "ssm:GetParameters",
+                    "kms:Decrypt"
+                  ],
+                  "Effect": "Allow",
+                  "Principal": {},
+                  "Resource": [
+                    "arn:aws:secretsmanager:eu-west-3:175142243308:secret:DockerHubAccessToken-vKjW34"
+                  ]
+                }
+              ]
+            },
+            "PolicyName": "workerGrantAccessToSecrets"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    }
+  }
+}

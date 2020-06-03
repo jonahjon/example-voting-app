@@ -12,7 +12,9 @@ services:
     networks:
       - front-tier
       - back-tier
-
+    depends_on:
+      - "redis"
+  
   result:
     image: ${REGISTRY}/ndeloof/result
     build: ./result
@@ -25,7 +27,9 @@ services:
     networks:
       - front-tier
       - back-tier
-
+    depends_on:
+      - "db"
+  
   worker:
     image: ndeloof/worker    
     x-aws-pull_credentials: "arn:aws:secretsmanager:eu-west-3:175142243308:secret:DockerHubAccessToken-vKjW34"

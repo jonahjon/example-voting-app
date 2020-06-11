@@ -2,21 +2,21 @@ version: "3.7"
 
 services:
   vote:
-    image: ${REGISTRY}/ndeloof/vote
+    image: 164382793440.dkr.ecr.us-west-2.amazonaws.com/voting-app/vote  
     build: ./vote
     command: python app.py
     volumes:
      - ./vote:/app
     ports:
       - "5000:5000"
+    depends_on:
+      - "redis"
     networks:
       - front-tier
       - back-tier
-    depends_on:
-      - "redis"
-  
+
   result:
-    image: ${REGISTRY}/ndeloof/result
+    image: 164382793440.dkr.ecr.us-west-2.amazonaws.com/voting-app/result  
     build: ./result
     command: nodemon server.js
     volumes:
@@ -24,21 +24,20 @@ services:
     ports:
       - "5001:5001"
       - "5858:5858"
+    depends_on:
+      - "db"
     networks:
       - front-tier
       - back-tier
-    depends_on:
-      - "db"
-  
+
   worker:
-    image: ndeloof/worker    
-    x-aws-pull_credentials: "arn:aws:secretsmanager:eu-west-3:175142243308:secret:DockerHubAccessToken-vKjW34"
-    build: 
+    image: 164382793440.dkr.ecr.us-west-2.amazonaws.com/voting-app/worker  
+    build:
       context: ./worker
       dockerfile: Dockerfile.j
     depends_on:
       - "redis"
-      - "db"      
+      - "db"
     networks:
       - back-tier
 
@@ -55,15 +54,9 @@ services:
     environment:
       POSTGRES_USER: "postgres"
       POSTGRES_PASSWORD: "postgres"
-#    volumes:
-#      - "db-data:/var/lib/postgresql/data"
     networks:
       - back-tier
-
-# volumes:
-#  db-data:
 
 networks:
   front-tier:
   back-tier:
-
